@@ -26,6 +26,9 @@ class A3CAgent:
     def train_actor(self, loss):
         pass
 
+    def onStep(self, s0, a, r, s1, prob, done, info):
+        pass
+
 class Episode:
     def __init__(self, env: gym.Env, agent: A3CAgent):
         self.env: gym.Env = env
@@ -64,27 +67,30 @@ class A3CTrainer:
         for episode in self.episodes:
             s0 = episode.obs()
             a = episode.agent.actor(torch.tensor(s0).cuda())
-            prob = torch.exp(a).detach().cpu().numpy()
-            action = np.random.choice(range(episode.env.action_space.n))
+            prob = a.detach().cpu().numpy()
+            action = np.random.choice(range(episode.env.action_space.n), size=1, p=prob)[0]
             s1, r, done, info = episode.step(action)
+            episode.agent.onStep(s0, action, r, s1, prob, done, info)
             if done:
                 s1 = None
             episode.log.append((s0, action, r, s1))
 
             if done or len(episode.log) >= self.max_timesteps:
                 # Train on log
-                for data in episode.log:
+                s_last = episode.log[-1][3]
+                Q_last = episode.agent.critic(torch.tensor(s_last).cuda()).detach().cpu().item() if s_last is not None else 0
+                for i, data in enumerate(episode.log):
                     s0, action, reward, s1 = data
 
                     c0 = episode.agent.critic(torch.tensor(s0).cuda())
                     c1 = episode.agent.critic(torch.tensor(s1).cuda()) if s1 is not None else torch.tensor(0).cuda()
-                    t = torch.tensor(reward).cuda() + self.gamma * c1.detach()
+                    t = torch.tensor(sum([math.pow(self.gamma, j-i) * episode.log[j][2] for j in range(i, len(episode.log))]) + math.pow(self.gamma, len(episode.log)-1) * Q_last).cuda()
                     episode.agent.train_critic(F.mse_loss(c0, t))
 
                     c0 = episode.agent.critic(torch.tensor(s0).cuda())
                     advantage = t - c0.detach()
                     a = episode.agent.actor(torch.tensor(s0).cuda())
-                    a_loss = -a[action] * advantage
+                    a_loss = -torch.log(a[action]) * advantage + 0.01 *  torch.sum(a * torch.log(a))
                     episode.agent.train_actor(a_loss)
 
                 episode.log = []
