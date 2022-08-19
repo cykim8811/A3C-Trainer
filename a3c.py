@@ -67,7 +67,7 @@ class A3CTrainer:
         for episode in self.episodes:
             s0 = episode.obs()
             a = episode.agent.actor(torch.tensor(s0).cuda())
-            prob = a.detach().cpu().numpy()
+            prob = torch.exp(a).detach().cpu().numpy()
             action = np.random.choice(range(episode.env.action_space.n), size=1, p=prob)[0]
             s1, r, done, info = episode.step(action)
             episode.agent.onStep(s0, action, r, s1, prob, done, info)
@@ -85,12 +85,12 @@ class A3CTrainer:
                     c0 = episode.agent.critic(torch.tensor(s0).cuda())
                     c1 = episode.agent.critic(torch.tensor(s1).cuda()) if s1 is not None else torch.tensor(0).cuda()
                     t = torch.tensor(sum([math.pow(self.gamma, j-i) * episode.log[j][2] for j in range(i, len(episode.log))]) + math.pow(self.gamma, len(episode.log)-1) * Q_last).cuda()
-                    episode.agent.train_critic(F.mse_loss(c0, t))
+                    episode.agent.train_critic(F.mse_loss(c0[0], t))
 
                     c0 = episode.agent.critic(torch.tensor(s0).cuda())
                     advantage = t - c0.detach()
                     a = episode.agent.actor(torch.tensor(s0).cuda())
-                    a_loss = -torch.log(a[action]) * advantage + 0.01 *  torch.sum(a * torch.log(a))
+                    a_loss = -a[action] * advantage + 0.01 *  torch.sum(a * torch.exp(a))
                     episode.agent.train_actor(a_loss)
 
                 episode.log = []
